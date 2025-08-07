@@ -4,19 +4,12 @@ const addBtn = document.getElementById("addBtn");
 const saveBtn = document.getElementById("saveBtn");
 const addToast = document.getElementById("toast");
 const deleteToast = document.getElementById("deleteToast");
-const localToast = document.getElementById("localToast");
-
 const timeFilter = document.getElementById("timeFilter");
 const statusFilter = document.getElementById("statusFilter");
 const applyFiltersBtn = document.getElementById("applyFiltersBtn");
 
-let todoList = getLocalStorageItems();
-let todoCount = todoList.length;
 
-function renderTodoList(list) {
-  todoItemsContainer.innerHTML = "";
-  list.forEach(createAndAppendTodo);
-}
+const API_BASE_URL = "http://localhost:5000/api/todos";
 
 function showToast(container, message, className) {
   const toastMessage = document.createElement("p");
@@ -24,78 +17,104 @@ function showToast(container, message, className) {
   toastMessage.className = className;
   container.innerHTML = "";
   container.appendChild(toastMessage);
+  setTimeout(() => {
+    toastMessage.remove();
+  }, 3000);
 }
 
-
-function getLocalStorageItems() {
-  const items = localStorage.getItem("todoItems");
-  return items ? JSON.parse(items) : [];
-}
-
-saveBtn.onclick = function () {
-  localStorage.setItem("todoItems", JSON.stringify(todoList));
-  showToast(localToast, "Task Saved", "local-message");
-};
-
-addBtn.onclick = function () {
-  const inputValue = todoUserInput.value.trim();
-
-  if (inputValue === "") {
-    alert("Enter your tasks");
-    return;
-  }
-
-  todoCount += 1;
-  const newTask = {
-    name: inputValue,
-    uniqueId: todoCount,
-    isChecked: false,
-    createdAt: Date.now(),
-  };
-
-  todoList.push(newTask);
-  todoUserInput.value = "";
-
-  showToast(addToast, "New Task Added", "add-message");
-
-  renderTodoList(todoList);
-};
-
-function onTodoStatusChanged(checkboxId, labelId, todoId) {
-  const checkbox = document.getElementById(checkboxId);
-  const label = document.getElementById(labelId);
-  label.classList.toggle("strike-text");
-
-  const index = todoList.findIndex((item) => "todo" + item.uniqueId === todoId);
-  if (index !== -1) {
-    todoList[index].isChecked = checkbox.checked;
+async function fetchTodos(timeFilter = "all", statusFilter = "all") {
+  try {
+    const url = new URL(API_BASE_URL);
+    url.searchParams.append("timeFilter", timeFilter);
+    url.searchParams.append("statusFilter", statusFilter);
+    
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Failed to fetch todos");
+    return await response.json();
+  } catch (error) {
+    console.error("Error fetching todos:", error);
+    showToast(addToast, "Error loading todos", "error-message");
+    return [];
   }
 }
 
-function onDeleteTodo(todoId) {
-  const index = todoList.findIndex((item) => "todo" + item.uniqueId === todoId);
-  if (index !== -1) {
-    todoList.splice(index, 1);
-    showToast(deleteToast, "Task Deleted", "delete-message");
+async function createTodo(todoText) {
+  try {
+    const response = await fetch(API_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: todoText }),
+    });
+    
+    if (!response.ok) throw new Error("Failed to create todo");
+    return await response.json();
+  } catch (error) {
+    console.error("Error creating todo:", error);
+    throw error;
   }
-  renderTodoList(todoList);
+}
+
+async function updateTodoStatus(todoId, isChecked) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${todoId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ isChecked }),
+    });
+    
+    if (!response.ok) throw new Error("Failed to update todo");
+    return await response.json();
+  } catch (error) {
+    console.error("Error updating todo:", error);
+    throw error;
+  }
+}
+
+async function deleteTodo(todoId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/${todoId}`, {
+      method: "DELETE",
+    });
+    
+    if (!response.ok) throw new Error("Failed to delete todo");
+    return true;
+  } catch (error) {
+    console.error("Error deleting todo:", error);
+    throw error;
+  }
+}
+
+async function renderTodoList() {
+  const timeValue = timeFilter.value;
+  const statusValue = statusFilter.value;
+  
+  const { data: todos } = await fetchTodos(timeValue, statusValue);
+  todoItemsContainer.innerHTML = "";
+  
+  todos.forEach(todo => {
+    createAndAppendTodo(todo);
+  });
 }
 
 function createAndAppendTodo(todo) {
-  const todoId = "todo" + todo.uniqueId;
-  const checkboxId = "check" + todo.uniqueId;
-  const labelId = "label" + todo.uniqueId;
+  const todoId = todo._id;
+  const checkboxId = `check-${todoId}`;
+  const labelId = `label-${todoId}`;
 
   const todoElement = document.createElement("li");
   todoElement.className = "todo-item-container d-flex flex-row";
-  todoElement.id = todoId;
+  todoElement.id = `todo-${todoId}`;
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.id = checkboxId;
   checkbox.checked = todo.isChecked;
   checkbox.className = "checkbox-input";
-  checkbox.onclick = () => onTodoStatusChanged(checkboxId, labelId, todoId);
+  checkbox.onclick = () => onTodoStatusChanged(todoId, checkboxId, labelId);
 
   const labelContainer = document.createElement("div");
   labelContainer.className = "label-container d-flex flex-row";
@@ -114,18 +133,13 @@ function createAndAppendTodo(todo) {
   deleteIcon.className = "far fa-trash-alt delete-icon";
   deleteIcon.onclick = () => onDeleteTodo(todoId);
 
+  const timeAgoSpan = document.createElement("span");
+  timeAgoSpan.className = "time-ago";
+  timeAgoSpan.textContent = getTimeAgo(new Date(todo.createdAt));
+
   deleteContainer.appendChild(deleteIcon);
   labelContainer.appendChild(label);
   labelContainer.appendChild(deleteContainer);
-
-  const timeAgoSpan = document.createElement("span");
-  timeAgoSpan.className = "time-ago";
-  timeAgoSpan.id = "timeAgo" + todo.uniqueId;
-  timeAgoSpan.style.marginLeft = "12px";
-  timeAgoSpan.style.color = "#718096";
-  timeAgoSpan.style.fontSize = "14px";
-  timeAgoSpan.textContent = getTimeAgo(todo.createdAt);
-
   labelContainer.appendChild(timeAgoSpan);
 
   todoElement.appendChild(checkbox);
@@ -133,18 +147,9 @@ function createAndAppendTodo(todo) {
   todoItemsContainer.appendChild(todoElement);
 }
 
-setInterval(() => {
-  todoList.forEach((todo) => {
-    const timeAgoElement = document.getElementById("timeAgo" + todo.uniqueId);
-    if (timeAgoElement) {
-      timeAgoElement.textContent = getTimeAgo(todo.createdAt);
-    }
-  });
-}, 60000);
-
-function getTimeAgo(time) {
-  const now = Date.now();
-  const diff = now - time;
+function getTimeAgo(date) {
+  const now = new Date();
+  const diff = now - date;
 
   const seconds = Math.floor(diff / 1000);
   if (seconds < 5) return "just now";
@@ -160,42 +165,54 @@ function getTimeAgo(time) {
   return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
+async function onTodoStatusChanged(todoId, checkboxId, labelId) {
+  const checkbox = document.getElementById(checkboxId);
+  const label = document.getElementById(labelId);
+  
+  try {
+    await updateTodoStatus(todoId, checkbox.checked);
+    label.classList.toggle("strike-text");
+  } catch (error) {
+    checkbox.checked = !checkbox.checked; 
+    showToast(addToast, "Failed to update task", "error-message");
+  }
+}
 
-applyFiltersBtn.onclick = function () {
-  const timeValue = timeFilter.value;
-  const statusValue = statusFilter.value;
-  const now = Date.now();
+async function onDeleteTodo(todoId) {
+  try {
+    await deleteTodo(todoId);
+    showToast(deleteToast, "Task Deleted", "delete-message");
+    await renderTodoList();
+  } catch (error) {
+    showToast(deleteToast, "Failed to delete task", "error-message");
+  }
+}
 
-  const filteredTodos = todoList.filter((todo) => {
-    let time = false;
-    if (timeValue === "all") {
-      time = true;
-    } else if (timeValue === "today") {
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      time = todo.createdAt >= startOfDay.getTime();
-    } else if (timeValue === "week") {
-      const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
-      time = todo.createdAt >= weekAgo;
-    } else if (timeValue === "month") {
-      const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
-      time = todo.createdAt >= monthAgo;
+async function initializeApp() {
+  addBtn.addEventListener("click", async () => {
+    const inputValue = todoUserInput.value.trim();
+    
+    if (!inputValue) {
+      showToast(addToast, "Please enter a task", "error-message");
+      return;
     }
 
-    let status = false;
-    if (statusValue === "all") {
-      status = true;
-    } else if (statusValue === "completed") {
-      status = todo.isChecked === true;
-    } else if (statusValue === "incomplete") {
-      status = todo.isChecked === false;
+    try {
+      await createTodo(inputValue);
+      todoUserInput.value = "";
+      showToast(addToast, "New Task Added", "add-message");
+      await renderTodoList();
+    } catch (error) {
+      showToast(addToast, "Failed to add task", "error-message");
     }
-
-    return time && status;
   });
 
-  renderTodoList(filteredTodos);
-};
+  applyFiltersBtn.addEventListener("click", renderTodoList);
+
+  saveBtn.style.display = "none";
+
+  await renderTodoList();
+}
 
 
-renderTodoList(todoList);
+initializeApp();
